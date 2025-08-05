@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=Edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Trợ lý Ngôn ngữ AI</title>
+
+    <!-- 1. Tải thư viện Office.js -->
+    <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js" type="text/javascript"></script>
+
+    <!-- 2. Tải Tailwind CSS và Font Awesome -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.2.0/css/all.min.css">
+
+    <!-- 3. CSS tùy chỉnh cho giao diện -->
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+        .suggestion-card {
+            transition: all 0.2s ease-in-out;
+            border-left-width: 4px;
+        }
+        .suggestion-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3b82f6;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .explanation {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out;
+        }
+        .explanation.show {
+            max-height: 200px; /* Hoặc một giá trị đủ lớn */
+        }
+        /* Màu sắc cho các loại đề xuất */
+        .border-blue-500 { border-left-color: #3b82f6; } /* Ngữ pháp */
+        .border-purple-500 { border-left-color: #8b5cf6; } /* Văn phong AI */
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800 flex flex-col h-screen">
+    <!-- TIÊU ĐỀ -->
+    <header class="p-4 border-b border-gray-200">
+        <h1 class="text-xl font-bold text-gray-900 flex items-center"><i class="fa-solid fa-robot text-blue-500 mr-2"></i>Trợ lý Ngôn ngữ AI</h1>
+        <p class="text-sm text-gray-500">Phân tích chuyên sâu bởi Google Gemini</p>
+    </header>
+
+    <!-- NÚT HÀNH ĐỘNG VÀ TÓM TẮT -->
+    <div class="p-4">
+        <button id="check-button" class="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 transition-colors duration-200 shadow-md flex items-center justify-center space-x-2 disabled:bg-gray-400 disabled:cursor-not-allowed">
+            <i class="fas fa-magic-sparkles"></i>
+            <span>Phân tích toàn bộ văn bản</span>
+        </button>
+        <div id="summary" class="text-sm text-center text-gray-600 mt-3 hidden"></div>
+    </div>
+
+    <!-- KHU VỰC HIỂN THỊ KẾT QUẢ -->
+    <main id="results-container" class="flex-grow p-4 overflow-y-auto bg-gray-100">
+        <div id="loader" class="hidden justify-center items-center flex-col text-center py-8">
+            <div class="loader"></div>
+            <p id="loader-text" class="mt-3 text-sm text-gray-600">Đang gửi văn bản đến AI...</p>
+        </div>
+        <div id="placeholder" class="text-center text-gray-500 py-8">
+            <i class="fa-solid fa-file-lines fa-3x text-gray-400"></i>
+            <h3 class="mt-2 text-sm font-medium text-gray-900">Sẵn sàng phân tích</h3>
+            <p class="mt-1 text-sm text-gray-500">Nhấn nút để AI bắt đầu làm việc.</p>
+        </div>
+        <div id="suggestion-list" class="space-y-3">
+            <!-- Các thẻ đề xuất sẽ được chèn vào đây -->
+        </div>
+    </main>
+    
+    <footer class="p-2 text-center text-xs text-gray-400 border-t border-gray-200">
+        <p>Powered by Google Gemini API</p>
+    </footer>
+
+    <script type="text/javascript">
+        Office.onReady((info) => {
+            if (info.host === Office.HostType.Word) {
+                document.getElementById("check-button").onclick = runAnalysis;
+            }
+        });
+
+        // =================================================================
+        // REAL GEMINI API INTEGRATION
+        // =================================================================
+
+        /**
+         * Gọi API Gemini với cơ chế thử lại (exponential backoff).
+         * @param {string} sentence - Câu văn cần phân tích.
+         * @param {number} maxRetries - Số lần thử lại tối đa.
+         * @returns {Promise<object|null>} - Đối tượng JSON chứa gợi ý hoặc null.
+         */
+        async function callGeminiApi(sentence, maxRetries = 3) {
+            // **QUAN TRỌNG**: Trong một ứng dụng thực tế, API key cần được quản lý an toàn
+            // và không nên để lộ trong mã nguồn phía client.
+            const apiKey = ""; // Canvas sẽ tự động cung cấp key này.
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+
+            // Prompt được thiết kế để yêu cầu AI trả về một cấu trúc JSON cụ thể.
+            const prompt = `Phân tích câu tiếng Việt sau đây. Nếu có thể cải thiện, hãy viết lại cho rõ ràng, súc tích và chuyên nghiệp hơn.
+            Chỉ trả lời bằng một đối tượng JSON có cấu trúc: {"suggestion": "câu đề xuất", "explanation": "giải thích ngắn gọn tại sao"}.
+            Nếu câu đã tốt và không cần sửa, hãy trả về JSON: {"suggestion": null, "explanation": null}.
+            Câu cần phân tích: "${sentence}"`;
+
+            const payload = {
+                contents: [{ parts: [{ text: prompt }] }],
+                generationConfig: {
+                    responseMimeType: "application/json",
+                }
+            };
+
+            for (let i = 0; i < maxRetries; i++) {
+                try {
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+
+                    const result = await response.json();
+                    const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+                    if (text) {
+                        const parsedJson = JSON.parse(text);
+                        if (parsedJson.suggestion) {
+                            return {
+                                type: 'Văn phong',
+                                original: sentence,
+                                ...parsedJson
+                            };
+                        }
+                    }
+                    return null; // Câu đã tốt hoặc không có phản hồi hợp lệ
+                } catch (error) {
+                    console.error(`API call failed (attempt ${i + 1}):`, error);
+                    if (i === maxRetries - 1) throw error; // Ném lỗi ở lần thử cuối
+                    const delay = Math.pow(2, i) * 1000; // 1s, 2s, 4s
+                    await new Promise(res => setTimeout(res, delay));
+                }
+            }
+            return null;
+        }
+        
+        // =================================================================
+        // MAIN APPLICATION LOGIC
+        // =================================================================
+
+        async function runAnalysis() {
+            const button = document.getElementById("check-button");
+            const suggestionList = document.getElementById("suggestion-list");
+            const loader = document.getElementById("loader");
+            const loaderText = document.getElementById("loader-text");
+            const placeholder = document.getElementById("placeholder");
+            const summary = document.getElementById("summary");
+
+            // Vô hiệu hóa nút và hiển thị loader
+            button.disabled = true;
+            button.querySelector('span').innerText = "Đang phân tích...";
+            loader.classList.remove("hidden");
+            loader.classList.add("flex");
+            placeholder.classList.add("hidden");
+            suggestionList.innerHTML = '';
+            summary.classList.add("hidden");
+
+            try {
+                await Word.run(async (context) => {
+                    const body = context.document.body;
+                    context.load(body, 'text');
+                    await context.sync();
+
+                    const text = body.text;
+                    if (!text.trim()) {
+                         showPlaceholder("Văn bản trống", "Không có gì để phân tích.");
+                         return;
+                    }
+
+                    const allSuggestions = [];
+                    // 1. Kiểm tra lỗi cơ bản (lặp từ) - nhanh và miễn phí
+                    const repeatedWordRegex = /\b(\w+)\s+\1\b/gi;
+                    let match;
+                    while ((match = repeatedWordRegex.exec(text)) !== null) {
+                        allSuggestions.push({
+                            type: 'Ngữ pháp',
+                            original: match[0],
+                            suggestion: match[1],
+                            explanation: "Lỗi lặp từ."
+                        });
+                    }
+
+                    // 2. Phân tích văn phong với AI
+                    const sentences = text.match(/[^.!?]+[.!?]+/g) || [];
+                    const analysisPromises = [];
+                    for (const sentence of sentences) {
+                        if (sentence.trim().length > 10) { // Chỉ phân tích câu có độ dài hợp lý
+                            analysisPromises.push(callGeminiApi(sentence.trim()));
+                        }
+                    }
+                    
+                    loaderText.innerText = `Đang gửi ${analysisPromises.length} câu đến AI...`;
+                    
+                    const aiResults = await Promise.all(analysisPromises);
+                    aiResults.forEach(res => {
+                        if (res) allSuggestions.push(res);
+                    });
+
+                    // 3. Hiển thị kết quả
+                    loader.classList.add("hidden");
+                    if (allSuggestions.length > 0) {
+                        displaySuggestions(allSuggestions);
+                        updateSummary(allSuggestions);
+                    } else {
+                        showPlaceholder("Văn bản hoàn hảo!", "AI không tìm thấy đề xuất nào để cải thiện.");
+                    }
+                });
+            } catch (error) {
+                console.error("Lỗi phân tích:", error);
+                showPlaceholder("Gặp sự cố kết nối", "Không thể kết nối đến máy chủ AI. Vui lòng thử lại sau.");
+            } finally {
+                // Kích hoạt lại nút
+                button.disabled = false;
+                button.querySelector('span').innerText = "Phân tích toàn bộ văn bản";
+            }
+        }
+
+        function displaySuggestions(suggestions) {
+            const list = document.getElementById("suggestion-list");
+            list.innerHTML = '';
+
+            const typeStyles = {
+                'Ngữ pháp': { color: 'blue', icon: 'fa-comments' },
+                'Văn phong': { color: 'purple', icon: 'fa-wand-magic-sparkles' }
+            };
+
+            suggestions.forEach((item, index) => {
+                const style = typeStyles[item.type];
+                const card = document.createElement('div');
+                card.className = `suggestion-card bg-white p-4 rounded-lg shadow-sm border-${style.color}-500`;
+                card.id = `card-${index}`;
+                
+                card.innerHTML = `
+                    <div class="flex justify-between items-start">
+                        <span class="text-xs bg-${style.color}-100 text-${style.color}-800 font-medium px-2 py-1 rounded-full">
+                            <i class="fas ${style.icon} mr-1"></i>${item.type}
+                        </span>
+                        <button class="ignore-btn text-gray-400 hover:text-gray-600" data-card-id="card-${index}"><i class="fas fa-times"></i></button>
+                    </div>
+                    <div class="mt-2 text-sm">
+                        <p class="text-gray-500">Gốc: <span class="line-through">${item.original}</span></p>
+                        <p class="text-green-600">Đề xuất: <span class="font-bold">${item.suggestion}</span></p>
+                    </div>
+                    <div class="mt-3 explanation" id="explanation-${index}">
+                        <p class="text-xs text-gray-700 bg-gray-100 p-2 rounded-md">${item.explanation}</p>
+                    </div>
+                    <div class="mt-3 flex items-center justify-between">
+                         <button class="explain-btn text-xs text-blue-600 hover:underline" data-target-id="explanation-${index}">
+                            <i class="fas fa-circle-info mr-1"></i>Tại sao?
+                         </button>
+                         <button class="apply-btn bg-green-500 hover:bg-green-600 text-white text-sm font-bold py-1 px-3 rounded-md transition-colors" data-original="${item.original}" data-suggestion="${item.suggestion}">
+                            Áp dụng
+                         </button>
+                    </div>
+                `;
+                list.appendChild(card);
+            });
+
+            // Gán sự kiện
+            document.querySelectorAll('.apply-btn').forEach(b => b.onclick = handleApply);
+            document.querySelectorAll('.ignore-btn').forEach(b => b.onclick = handleIgnore);
+            document.querySelectorAll('.explain-btn').forEach(b => b.onclick = handleExplain);
+        }
+
+        function handleApply(event) {
+            const btn = event.currentTarget;
+            applySuggestion(btn.dataset.original, btn.dataset.suggestion);
+            btn.closest('.suggestion-card').remove();
+            updateSummaryAfterAction();
+        }
+
+        function handleIgnore(event) {
+            document.getElementById(event.currentTarget.dataset.cardId).remove();
+            updateSummaryAfterAction();
+        }
+
+        function handleExplain(event) {
+            const targetId = event.currentTarget.dataset.targetId;
+            document.getElementById(targetId).classList.toggle('show');
+        }
+
+        async function applySuggestion(original, suggestion) {
+            await Word.run(async (context) => {
+                const searchResults = context.document.body.search(original, { matchCase: true });
+                searchResults.load('items');
+                await context.sync();
+                if (searchResults.items.length > 0) {
+                    searchResults.items[0].insertText(suggestion, 'Replace');
+                    await context.sync();
+                }
+            }).catch(error => console.error(error));
+        }
+        
+        // Các hàm tiện ích (showPlaceholder, updateSummary, updateSummaryAfterAction)
+        function showPlaceholder(title, message) {
+            const placeholder = document.getElementById("placeholder");
+            placeholder.classList.remove("hidden");
+            placeholder.querySelector('h3').innerText = title;
+            placeholder.querySelector('p').innerText = message;
+        }
+
+        function updateSummary(suggestions) {
+            const summaryEl = document.getElementById("summary");
+            if (suggestions.length > 0) {
+                summaryEl.innerHTML = `AI đã tìm thấy <strong>${suggestions.length}</strong> đề xuất để cải thiện văn bản.`;
+                summaryEl.classList.remove("hidden");
+            } else {
+                 summaryEl.classList.add("hidden");
+            }
+        }
+
+        function updateSummaryAfterAction() {
+             const remainingCards = document.querySelectorAll('.suggestion-card').length;
+             const summaryEl = document.getElementById("summary");
+             if (remainingCards > 0) {
+                summaryEl.innerHTML = `Còn lại <strong>${remainingCards}</strong> đề xuất cần xử lý.`;
+             } else {
+                summaryEl.classList.add("hidden");
+                showPlaceholder("Hoàn tất!", "Tất cả các đề xuất đã được xử lý.");
+             }
+        }
+
+    </script>
+</body>
+</html>
+
+
